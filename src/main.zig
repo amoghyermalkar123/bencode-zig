@@ -11,8 +11,8 @@ const Token = enum {
 const Lexeme = union(Token) {
     int: u64,
     string: []const u8,
-    dictionary,
-    list,
+    dictionary: void,
+    list: void,
 };
 
 const ParserError = error{
@@ -60,15 +60,18 @@ const Parser = struct {
                 // parse integer
                 'i' => try self.parse_int(allocator),
                 // panic
-                else => @panic("encountered a weird char"),
+                else => {
+                    std.debug.print("char : {c}\n", .{self.torrent[self.cursor]});
+                    @panic("encountered a weird char");
+                },
             }
         }
     }
 
-    fn parse_list(self: *Self, allocator: Allocator) !void {
+    fn parse_list(self: *Self, allocator: Allocator) anyerror!void {
         // ignore the first 'l'
         self.cursor += 1;
-        try self.lexemes.append(Lexeme{.list});
+        try self.lexemes.append(Lexeme.list);
         while (self.cursor < self.torrent.len) {
             switch (self.torrent[self.cursor]) {
                 'e' => break,
@@ -80,13 +83,13 @@ const Parser = struct {
             }
             self.cursor += 1;
         }
-        try self.lexemes.append(Lexeme{.list});
+        try self.lexemes.append(Lexeme.list);
     }
 
-    fn parse_dict(self: *Self, allocator: Allocator) !void {
+    fn parse_dict(self: *Self, allocator: Allocator) anyerror!void {
         // ignore the first 'd'
         self.cursor += 1;
-        try self.lexemes.append(Lexeme{.dictionary});
+        try self.lexemes.append(Lexeme.dictionary);
         while (self.cursor < self.torrent.len) {
             switch (self.torrent[self.cursor]) {
                 'e' => break,
@@ -98,7 +101,7 @@ const Parser = struct {
             }
             self.cursor += 1;
         }
-        try self.lexemes.append(Lexeme{.dictionary});
+        try self.lexemes.append(Lexeme.dictionary);
     }
 
     fn parse_int(self: *Self, allocator: Allocator) !void {
@@ -147,3 +150,94 @@ const Parser = struct {
         return length;
     }
 };
+
+const testing = std.testing;
+
+test "parse empty dictionary" {
+    const input = "de";
+    var list = std.ArrayList(Lexeme).init(testing.allocator);
+    defer list.deinit();
+
+    var parser = try Parser.init(&list, input);
+    try parser.parse(testing.allocator);
+
+    try testing.expectEqual(@as(usize, 2), list.items.len);
+    try testing.expect(list.items[0] == .dictionary);
+    try testing.expect(list.items[1] == .dictionary);
+}
+
+test "parse simple string" {
+    const input = "4:test";
+    var list = std.ArrayList(Lexeme).init(testing.allocator);
+    defer list.deinit();
+
+    var parser = try Parser.init(&list, input);
+    try parser.parse(testing.allocator);
+
+    try testing.expectEqual(@as(usize, 1), list.items.len);
+    try testing.expect(list.items[0] == .string);
+    try testing.expectEqualStrings("test", list.items[0].string);
+}
+
+test "parse integer" {
+    const input = "i42e";
+    var list = std.ArrayList(Lexeme).init(testing.allocator);
+    defer list.deinit();
+
+    var parser = try Parser.init(&list, input);
+    try parser.parse(testing.allocator);
+
+    try testing.expectEqual(@as(usize, 1), list.items.len);
+    try testing.expect(list.items[0] == .int);
+    try testing.expectEqual(@as(u64, 42), list.items[0].int);
+}
+
+test "parse empty list" {
+    const input = "le";
+    var list = std.ArrayList(Lexeme).init(testing.allocator);
+    defer list.deinit();
+
+    var parser = try Parser.init(&list, input);
+    try parser.parse(testing.allocator);
+
+    try testing.expectEqual(@as(usize, 2), list.items.len);
+    try testing.expect(list.items[0] == .list);
+    try testing.expect(list.items[1] == .list);
+}
+
+test "parse complex nested structure" {
+    const input = "d4:listl3:one3:twoe4:dictd3:key5:valueee";
+    var list = std.ArrayList(Lexeme).init(testing.allocator);
+    defer list.deinit();
+
+    var parser = try Parser.init(&list, input);
+    try parser.parse(testing.allocator);
+
+    try testing.expectEqual(@as(usize, 8), list.items.len);
+    try testing.expect(list.items[0] == .dictionary);
+    try testing.expectEqualStrings("list", list.items[1].string);
+    try testing.expect(list.items[2] == .list);
+    try testing.expectEqualStrings("one", list.items[3].string);
+    try testing.expectEqualStrings("two", list.items[4].string);
+    try testing.expect(list.items[5] == .list);
+}
+
+test "invalid input handling" {
+    const input = "x";
+    var list = std.ArrayList(Lexeme).init(testing.allocator);
+    defer list.deinit();
+
+    var parser = try Parser.init(&list, input);
+    try testing.expectError(error.InvalidInput, parser.parse(testing.allocator));
+}
+
+test "parse your example" {
+    const input = "d4:name5:Alice3:agei25eel4:name3:Bob3:agei26ee";
+    var list = std.ArrayList(Lexeme).init(testing.allocator);
+    defer list.deinit();
+
+    var parser = try Parser.init(&list, input);
+    try parser.parse(testing.allocator);
+
+    try testing.expectEqual(@as(usize, 12), list.items.len);
+}
