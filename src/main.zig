@@ -99,7 +99,6 @@ const Parser = struct {
                 '1'...'9' => try self.parse_string(allocator),
                 else => break,
             }
-            self.cursor += 1;
         }
         try self.lexemes.append(Lexeme.dictionary);
     }
@@ -117,6 +116,7 @@ const Parser = struct {
         defer buf.deinit();
         const string_length = try self.retrieve_bencode_string_length(&buf);
         try self.lexemes.append(Lexeme{ .string = self.torrent[self.cursor .. self.cursor + string_length] });
+        self.cursor += string_length;
     }
 
     fn retrieve_bencode_integer(self: *Self, buf: *std.ArrayList(u8)) !u64 {
@@ -146,7 +146,6 @@ const Parser = struct {
             self.cursor += 1;
         }
         const length = try std.fmt.parseInt(u64, buf.items, 10);
-        self.cursor += length;
         return length;
     }
 };
