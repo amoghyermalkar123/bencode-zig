@@ -124,10 +124,12 @@ const Parser = struct {
             switch (self.torrent[self.cursor]) {
                 'e' => break,
                 'i' => self.cursor += 1,
-                '1'...'9' => try buf.append(self.torrent[self.cursor]),
+                '1'...'9' => {
+                    try buf.append(self.torrent[self.cursor]);
+                    self.cursor += 1;
+                },
                 else => break,
             }
-            self.cursor += 1;
         }
         const parsedInt = try std.fmt.parseInt(u64, buf.items, 10);
         return parsedInt;
