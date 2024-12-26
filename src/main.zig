@@ -74,14 +74,16 @@ const Parser = struct {
         try self.lexemes.append(Lexeme.list);
         while (self.cursor < self.torrent.len) {
             switch (self.torrent[self.cursor]) {
-                'e' => break,
+                'e' => {
+                    self.cursor += 1;
+                    break;
+                },
                 'd' => try self.parse_dict(allocator),
                 'l' => try self.parse_list(allocator),
                 'i' => try self.parse_int(allocator),
                 '1'...'9' => try self.parse_string(allocator),
                 else => break,
             }
-            self.cursor += 1;
         }
         try self.lexemes.append(Lexeme.list);
     }
@@ -214,7 +216,7 @@ test "parse complex nested structure" {
     var parser = try Parser.init(&list, input);
     try parser.parse(testing.allocator);
 
-    try testing.expectEqual(@as(usize, 8), list.items.len);
+    try testing.expectEqual(@as(usize, 12), list.items.len);
     try testing.expect(list.items[0] == .dictionary);
     try testing.expectEqualStrings("list", list.items[1].string);
     try testing.expect(list.items[2] == .list);
