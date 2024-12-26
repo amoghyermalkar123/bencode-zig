@@ -17,6 +17,7 @@ const Lexeme = union(Token) {
 
 const ParserError = error{
     InvalidDictionary,
+    InvalidInput,
 };
 
 pub fn main() !void {
@@ -60,10 +61,7 @@ const Parser = struct {
                 // parse integer
                 'i' => try self.parse_int(allocator),
                 // panic
-                else => {
-                    std.debug.print("char : {c}\n", .{self.torrent[self.cursor]});
-                    @panic("encountered a weird char");
-                },
+                else => return ParserError.InvalidInput,
             }
         }
     }
@@ -94,7 +92,10 @@ const Parser = struct {
         try self.lexemes.append(Lexeme.dictionary);
         while (self.cursor < self.torrent.len) {
             switch (self.torrent[self.cursor]) {
-                'e' => break,
+                'e' => {
+                    self.cursor += 1;
+                    break;
+                },
                 'd' => try self.parse_dict(allocator),
                 'l' => try self.parse_list(allocator),
                 'i' => try self.parse_int(allocator),
@@ -124,7 +125,10 @@ const Parser = struct {
     fn retrieve_bencode_integer(self: *Self, buf: *std.ArrayList(u8)) !u64 {
         while (self.cursor < self.torrent.len) {
             switch (self.torrent[self.cursor]) {
-                'e' => break,
+                'e' => {
+                    self.cursor += 1;
+                    break;
+                },
                 'i' => self.cursor += 1,
                 '1'...'9' => {
                     try buf.append(self.torrent[self.cursor]);
@@ -231,7 +235,7 @@ test "invalid input handling" {
     defer list.deinit();
 
     var parser = try Parser.init(&list, input);
-    try testing.expectError(error.InvalidInput, parser.parse(testing.allocator));
+    try testing.expectError(ParserError.InvalidInput, parser.parse(testing.allocator));
 }
 
 test "parse your example" {
