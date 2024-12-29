@@ -19,14 +19,24 @@ pub const Token = struct {
     };
 };
 
+
+const Torrent = struct {
+};
+
 pub fn main() !void{
     const torrent = "d4:name5:Alice3:agei25eel4:name3:Bob3:agei26ee";
     var t = Tokenizer.init(torrent);
+
+    var tokens = std.ArrayList(Token).init(std.heap.page_allocator);
+    defer tokens.deinit();
+
     var next= try t.next();
     while (next.tag != .eof) {
-        std.debug.print("token: {any}\n", .{next.tag});
+        try tokens.append(next);
         next = try t.next();
     }
+
+    var decoded_torrent = Torrent{};
 }
 
 pub const Tokenizer = struct {
