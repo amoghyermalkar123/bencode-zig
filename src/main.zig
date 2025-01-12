@@ -13,7 +13,6 @@ pub fn main() !void {
     const contents = try file.readToEndAllocOptions(allocator, std.math.maxInt(usize), null, @alignOf(u8), 0);
     defer allocator.free(contents);
 
-    std.debug.print("content: {s}\n", .{contents});
     var t = Tokenizer.init(contents);
     var tokens = std.ArrayList(Token).init(std.heap.page_allocator);
     defer tokens.deinit();
