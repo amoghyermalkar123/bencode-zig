@@ -72,7 +72,7 @@ pub const Tokenizer = struct {
                     result.loc.start = self.index + 1;
                     continue :state .bee_int;
                 },
-                '1'...'9' => {
+                '0'...'9' => {
                     result.tag = .string;
                     result.loc.start = self.index;
                     continue :state .bee_string;
@@ -93,7 +93,7 @@ pub const Tokenizer = struct {
             .bee_int => {
                 self.index += 1;
                 switch (self.buffer[self.index]) {
-                    '1'...'9' => {
+                    '0'...'9' => {
                         continue :state .bee_int;
                     },
                     'e' => {
@@ -108,15 +108,15 @@ pub const Tokenizer = struct {
             .bee_string => {
                 self.index += 1;
                 switch (self.buffer[self.index]) {
-                    'a'...'a', 'A' ...'Z' => {
-                        continue :state .bee_string;
-                    },
-                    '1'...'9' => {
+                    '0'...'9' => {
                         continue :state .bee_string;
                     },
                     ':' => {
                         const new_start = self.index + 1;
                         const parsedInt = try std.fmt.parseInt(u64, self.buffer[result.loc.start..self.index], 10);
+                        if (new_start + parsedInt > self.buffer.len) {
+                            return TokenError.UnexpectedEndOfInput;
+                        }
                         self.index += parsedInt + 1;
                         result.loc.start = new_start;
                         result.loc.end = self.index;
