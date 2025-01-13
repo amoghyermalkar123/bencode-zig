@@ -1,6 +1,7 @@
 const std = @import("std");
 const Tokenizer = @import("tokenizer.zig").Tokenizer;
 const Token = @import("tokenizer.zig").Token;
+const Parser = @import("parser.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -14,13 +15,6 @@ pub fn main() !void {
     defer allocator.free(contents);
 
     var t = Tokenizer.init(contents);
-    var tokens = std.ArrayList(Token).init(std.heap.page_allocator);
-    defer tokens.deinit();
-
-    var next = try t.next();
-    while (next.tag != .eof) {
-        std.debug.print("TOKEN {any}\n", .{next.tag});
-        try tokens.append(next);
-        next = try t.next();
-    }
+    const torrent = try Parser.parse(allocator, contents, &t);
+    std.debug.print("Parsed Torrent: {any}\n", .{torrent});
 }
