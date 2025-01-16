@@ -5,7 +5,7 @@ const Tokenizer = @import("tokenizer.zig").Tokenizer;
 
 pub const Torrent = struct {
     // Metadata hash (not encoded in file, computed from info dict)
-    info_hash: [20]u8, // Fixed-size array for SHA1 hash
+    info_hash: []u8, // Fixed-size array for SHA1 hash
 
     // Required fields
     announce: []const u8, // Main tracker URL as string slice
@@ -57,6 +57,7 @@ pub const Parser = struct {
     pub const TorrentError = error{
         InvalidTorrent,
     };
+
     pub fn init(allocator: Allocator, torrent: [:0]u8) !Self {
         return .{
             .allocator = allocator,
@@ -75,7 +76,19 @@ pub const Parser = struct {
             return TorrentError.InvalidTorrent;
         }
 
-        const result: Torrent = undefined;
+        var result: Torrent = undefined;
+
+        try self.parseTopLevelTorrent(&result);
         return result;
     }
+
+    pub fn parseTopLevelTorrent(self: *Self, result: *Torrent) !void {
+        self.current_token = try self.tokenizer.next();
+        const val = self.torrent[self.current_token.?.loc.start..self.current_token.?.loc.end];
+        if (std.mem.eql(u8, val, "info_hash")) {
+            result.info_hash = try self.allocator.dupe(u8, self.torrent[self.current_token.?.loc.start..self.current_token.?.loc.end]);
+        }
+    }
+    // pub fn parseInfoStruct(self: *Self) !void {}
+    // pub fn parseFileEntry(self: *Self) !void {}
 };
