@@ -46,38 +46,36 @@ pub const Torrent = struct {
     };
 };
 
-pub fn parse(allocator: Allocator, torrent: []u8, t: *Tokenizer) !?Torrent {
-    _ = torrent;
-    var buf_list = std.ArrayList(Token).init(allocator);
-    defer buf_list.deinit();
+pub const Parser = struct {
+    allocator: std.mem.Allocator,
+    current_token: ?Token = null,
+    tokenizer: Tokenizer,
+    torrent: [:0]u8,
 
-    var buf_dict = std.StringHashMap([]u8).init(allocator);
-    defer buf_dict.deinit();
+    const Self = @This();
 
-    var next = try t.next();
-    while (true) {
-        switch (next.tag) {
-            .dict => {
-                std.debug.print("dict not impl", .{});
-            },
-            .list => {
-                std.debug.print("list not impl", .{});
-            },
-            .string => {
-                std.debug.print("string not impl", .{});
-            },
-            .int => {
-                std.debug.print("int not impl", .{});
-            },
-            .end => {
-                std.debug.print("end not impl", .{});
-            },
-            .eof => {
-                std.debug.print("finished!", .{});
-                break;
-            },
-        }
-        next = try t.next();
+    pub const TorrentError = error{
+        InvalidTorrent,
+    };
+    pub fn init(allocator: Allocator, torrent: [:0]u8) !Self {
+        return .{
+            .allocator = allocator,
+            .tokenizer = Tokenizer.init(torrent),
+            .torrent = torrent,
+        };
     }
-    return null;
-}
+
+    pub fn deinit() !void {}
+
+    pub fn parse(self: *Self) !?Torrent {
+        self.current_token = try self.tokenizer.next();
+
+        if (self.current_token.?.tag == .eof) return null;
+        if (self.current_token.?.tag != .dict) {
+            return TorrentError.InvalidTorrent;
+        }
+
+        const result: Torrent = undefined;
+        return result;
+    }
+};
