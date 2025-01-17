@@ -48,6 +48,7 @@ pub const Torrent = struct {
 
 pub const Parser = struct {
     allocator: std.mem.Allocator,
+    arena: std.heap.ArenaAllocator,
     current_token: ?Token = null,
     tokenizer: Tokenizer,
     torrent: [:0]u8,
@@ -59,22 +60,25 @@ pub const Parser = struct {
     };
 
     pub fn init(allocator: Allocator, torrent: [:0]u8) !Self {
+        var arena = std.heap.ArenaAllocator.init(allocator);
+
         return .{
-            .allocator = allocator,
+            .allocator = arena.allocator(),
+            .arena = arena,
             .tokenizer = Tokenizer.init(torrent),
             .torrent = torrent,
         };
     }
 
-    pub fn deinit() !void {}
+    pub fn deinit(self: *Self) void {
+        self.arena.deinit();
+    }
 
     pub fn parse(self: *Self) !?Torrent {
         self.current_token = try self.tokenizer.next();
 
         if (self.current_token.?.tag == .eof) return null;
-        if (self.current_token.?.tag != .dict) {
-            return TorrentError.InvalidTorrent;
-        }
+        if (self.current_token.?.tag != .dict) return TorrentError.InvalidTorrent;
 
         var result: Torrent = undefined;
 
@@ -85,10 +89,58 @@ pub const Parser = struct {
     pub fn parseTopLevelTorrent(self: *Self, result: *Torrent) !void {
         self.current_token = try self.tokenizer.next();
         const val = self.torrent[self.current_token.?.loc.start..self.current_token.?.loc.end];
-        if (std.mem.eql(u8, val, "info_hash")) {
-            result.info_hash = try self.allocator.dupe(u8, self.torrent[self.current_token.?.loc.start..self.current_token.?.loc.end]);
-        }
+        if (std.mem.eql(u8, val, "announce")) result.announce = try self.parseNextToken();
+        if (std.mem.eql(u8, val, "info_hash")) result.info_hash = try self.parseNextToken();
+        if (std.mem.eql(u8, val, "creation_date")) result.creation_date = try self.parseNextTokeni64();
+        if (std.mem.eql(u8, val, "comment")) result.comment = try self.parseNextToken();
+        if (std.mem.eql(u8, val, "created_by")) result.created_by = try self.parseNextToken();
+        if (std.mem.eql(u8, val, "encoding")) result.encoding = try self.parseNextToken();
     }
-    // pub fn parseInfoStruct(self: *Self) !void {}
-    // pub fn parseFileEntry(self: *Self) !void {}
+
+    pub fn parseInfoStruct(self: *Self, result: *Torrent) !void {
+        self.current_token = try self.tokenizer.next();
+        const val = self.torrent[self.current_token.?.loc.start..self.current_token.?.loc.end];
+        if (std.mem.eql(u8, val, "piece_length")) result.announce = try self.parseNextTokenu32();
+        if (std.mem.eql(u8, val, "pieces")) result.info_hash = try self.parseNextToken();
+        if (std.mem.eql(u8, val, "name")) result.creation_date = try self.parseNextTokeni64();
+        // if (std.mem.eql(u8, val, "private")) result.comment = try self.parseNextToken();
+        if (std.mem.eql(u8, val, "length")) result.created_by = try self.parseNextTokenu64();
+        if (std.mem.eql(u8, val, "md5sum")) result.encoding = try self.parseNextToken();
+        // if (std.mem.eql(u8, val, "files")) result.encoding = try self.parseFileEntry(result);
+    }
+
+    pub fn parseFileEntry(self: *Self, result: *Torrent) !void {
+        self.current_token = try self.tokenizer.next();
+        const val = self.torrent[self.current_token.?.loc.start..self.current_token.?.loc.end];
+        var file_entries = std.ArrayList(Torrent.Info.FileEntry).init(self.allocator);
+        while (true) {
+            if (self.current_token.?.tag == .end) break;
+            var fe: Torrent.Info.FileEntry = undefined;
+            if (std.mem.eql(u8, val, "length")) fe.length = try self.parseNextTokenu64();
+            if (std.mem.eql(u8, val, "path")) fe.path = try self.parseNextToken();
+            if (std.mem.eql(u8, val, "md5sum")) fe.md5sum = try self.parseNextToken();
+            try file_entries.append(fe);
+        }
+        result.info.files = try file_entries.toOwnedSlice();
+    }
+
+    pub fn parseNextToken(self: *Self) ![]u8 {
+        self.current_token = try self.tokenizer.next();
+        return try self.allocator.dupe(u8, self.torrent[self.current_token.?.loc.start..self.current_token.?.loc.end]);
+    }
+
+    pub fn parseNextTokeni64(self: *Self) !i64 {
+        self.current_token = try self.tokenizer.next();
+        return try std.fmt.parseInt(i64, self.torrent[self.current_token.?.loc.start..self.current_token.?.loc.end], 10);
+    }
+
+    pub fn parseNextTokenu32(self: *Self) !u32 {
+        self.current_token = try self.tokenizer.next();
+        return try std.fmt.parseInt(u32, self.torrent[self.current_token.?.loc.start..self.current_token.?.loc.end], 10);
+    }
+
+    pub fn parseNextTokenu64(self: *Self) !u64 {
+        self.current_token = try self.tokenizer.next();
+        return try std.fmt.parseInt(u64, self.torrent[self.current_token.?.loc.start..self.current_token.?.loc.end], 10);
+    }
 };

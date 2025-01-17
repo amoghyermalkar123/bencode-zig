@@ -15,6 +15,8 @@ pub fn main() !void {
     defer allocator.free(contents);
 
     var parser = try Parser.init(allocator, contents);
+    defer parser.deinit();
+
     const torrent = try parser.parse() orelse unreachable;
-    std.debug.print("Parsed Torrent: {any}\n", .{torrent});
+    std.debug.print("Parsed Torrent: {any}\n", .{torrent.announce});
 }
