@@ -4,11 +4,14 @@ const Allocator = std.mem.Allocator;
 const Tokenizer = @import("tokenizer.zig").Tokenizer;
 
 pub const Torrent = struct {
+    // main allocator
+    allocator: Allocator,
+
     // Metadata hash (not encoded in file, computed from info dict)
-    info_hash: []u8, // Fixed-size array for SHA1 hash
+    info_hash: []u8 = undefined, // Fixed-size array for SHA1 hash
 
     // Required fields
-    announce: []const u8, // Main tracker URL as string slice
+    announce: []const u8 = undefined, // Main tracker URL as string slice
 
     // Optional metadata (marked with ?)
     announce_list: ?[][]const u8 = null, // Optional list of backup trackers
@@ -18,14 +21,16 @@ pub const Torrent = struct {
     encoding: ?[]const u8 = null, // Optional character encoding
 
     // The main info dictionary (required)
-    info: Info,
+    info: Info = undefined,
 
     // Nested Info dictionary type
     pub const Info = struct {
+        // allocators
+        allocator: Allocator,
         // Required info fields
-        piece_length: u32, // Size of each piece
-        pieces: []const u8, // Concatenated SHA1 hashes
-        name: []const u8, // Suggested save name
+        piece_length: u32 = 0, // Size of each piece
+        pieces: []const u8 = undefined, // Concatenated SHA1 hashes
+        name: []const u8 = undefined, // Suggested save name
 
         // Optional info fields
         private: ?bool = null,
@@ -34,16 +39,82 @@ pub const Torrent = struct {
         length: ?u64 = null, // File size
         md5sum: ?[]const u8 = null, // Optional hash
 
-        // Multi-file mode fields (optional)
-        files: ?[]FileEntry = null, // List of files if multi-file
+        files: *std.ArrayList(FileEntry),
 
         // File entry type for multi-file torrents
         pub const FileEntry = struct {
             length: u64, // Size of file
-            path: []const u8, // File path
+            path: []const u8 = undefined, // File path
             md5sum: ?[]const u8 = null, // Optional hash
         };
+
+        pub fn init(allocator: Allocator, list: *std.ArrayList(FileEntry)) Info {
+            return .{
+                .allocator = allocator,
+                .files = list,
+            };
+        }
+
+        pub fn deinit(self: *Info) void {
+            // Don't free piece_length (it's a primitive u32)
+
+            if (self.pieces.len > 0) {
+                self.allocator.free(self.pieces);
+            }
+
+            if (self.name.len > 0) {
+                self.allocator.free(self.name);
+            }
+
+            // Handle optional fields
+            if (self.md5sum) |md5| {
+                self.allocator.free(md5);
+            }
+
+            self.files.deinit();
+        }
     };
+
+    const Self = @This();
+
+    pub fn init(allocator: Allocator, list: *std.ArrayList(Self.Info.FileEntry)) Self {
+        return .{
+            .allocator = allocator,
+            .info = Info.init(allocator, list),
+        };
+    }
+
+    pub fn deinit(self: *Self) void {
+        // Handle required fields
+        if (self.announce.len > 0) {
+            self.allocator.free(self.announce);
+        }
+
+        // Handle optional fields
+        if (self.announce_list) |list| {
+            for (list) |urls| {
+                self.allocator.free(urls);
+            }
+            self.allocator.free(list);
+        }
+
+        // Don't free creation_date since it's a primitive type (i64)
+
+        if (self.comment) |comm| {
+            self.allocator.free(comm);
+        }
+
+        if (self.created_by) |creator| {
+            self.allocator.free(creator);
+        }
+
+        if (self.encoding) |enc| {
+            self.allocator.free(enc);
+        }
+
+        // Handle info struct
+        self.info.deinit();
+    }
 };
 
 pub const Parser = struct {
@@ -57,6 +128,7 @@ pub const Parser = struct {
 
     pub const TorrentError = error{
         InvalidTorrent,
+        EOF,
     };
 
     pub fn init(allocator: Allocator, torrent: [:0]u8) !Self {
@@ -74,13 +146,14 @@ pub const Parser = struct {
         self.arena.deinit();
     }
 
-    pub fn parse(self: *Self) !?Torrent {
+    pub fn parse(self: *Self) !Torrent {
         self.current_token = try self.tokenizer.next();
 
-        if (self.current_token.?.tag == .eof) return null;
+        if (self.current_token.?.tag == .eof) return TorrentError.EOF;
         if (self.current_token.?.tag != .dict) return TorrentError.InvalidTorrent;
 
-        var result: Torrent = undefined;
+        var l = std.ArrayList(Torrent.Info.FileEntry).init(self.allocator);
+        var result = Torrent.init(self.allocator, &l);
 
         try self.parseTopLevelTorrent(&result);
         return result;
@@ -89,44 +162,43 @@ pub const Parser = struct {
     pub fn parseTopLevelTorrent(self: *Self, result: *Torrent) !void {
         self.current_token = try self.tokenizer.next();
         const val = self.torrent[self.current_token.?.loc.start..self.current_token.?.loc.end];
-        if (std.mem.eql(u8, val, "announce")) result.announce = try self.parseNextToken();
-        if (std.mem.eql(u8, val, "info_hash")) result.info_hash = try self.parseNextToken();
+        if (std.mem.eql(u8, val, "announce")) result.announce = try self.parseNextToken(result);
+        if (std.mem.eql(u8, val, "info_hash")) result.info_hash = try self.parseNextToken(result);
         if (std.mem.eql(u8, val, "creation_date")) result.creation_date = try self.parseNextTokeni64();
-        if (std.mem.eql(u8, val, "comment")) result.comment = try self.parseNextToken();
-        if (std.mem.eql(u8, val, "created_by")) result.created_by = try self.parseNextToken();
-        if (std.mem.eql(u8, val, "encoding")) result.encoding = try self.parseNextToken();
+        if (std.mem.eql(u8, val, "comment")) result.comment = try self.parseNextToken(result);
+        if (std.mem.eql(u8, val, "created_by")) result.created_by = try self.parseNextToken(result);
+        if (std.mem.eql(u8, val, "encoding")) result.encoding = try self.parseNextToken(result);
+        if (std.mem.eql(u8, val, "info")) try self.parseInfoStruct(result);
     }
 
     pub fn parseInfoStruct(self: *Self, result: *Torrent) !void {
         self.current_token = try self.tokenizer.next();
         const val = self.torrent[self.current_token.?.loc.start..self.current_token.?.loc.end];
-        if (std.mem.eql(u8, val, "piece_length")) result.announce = try self.parseNextTokenu32();
-        if (std.mem.eql(u8, val, "pieces")) result.info_hash = try self.parseNextToken();
-        if (std.mem.eql(u8, val, "name")) result.creation_date = try self.parseNextTokeni64();
-        // if (std.mem.eql(u8, val, "private")) result.comment = try self.parseNextToken();
-        if (std.mem.eql(u8, val, "length")) result.created_by = try self.parseNextTokenu64();
-        if (std.mem.eql(u8, val, "md5sum")) result.encoding = try self.parseNextToken();
-        // if (std.mem.eql(u8, val, "files")) result.encoding = try self.parseFileEntry(result);
+        if (std.mem.eql(u8, val, "piece_length")) result.info.piece_length = try self.parseNextTokenu32();
+        if (std.mem.eql(u8, val, "pieces")) result.info.pieces = try self.parseNextToken(result);
+        if (std.mem.eql(u8, val, "name")) result.info.name = try self.parseNextToken(result);
+        // if (std.mem.eql(u8, val, "private")) result.comment = try self.parseNextToken(result);
+        if (std.mem.eql(u8, val, "length")) result.info.length = try self.parseNextTokenu64();
+        if (std.mem.eql(u8, val, "md5sum")) result.info.md5sum = try self.parseNextToken(result);
+        if (std.mem.eql(u8, val, "files")) try self.parseFileEntry(result);
     }
 
     pub fn parseFileEntry(self: *Self, result: *Torrent) !void {
         self.current_token = try self.tokenizer.next();
         const val = self.torrent[self.current_token.?.loc.start..self.current_token.?.loc.end];
-        var file_entries = std.ArrayList(Torrent.Info.FileEntry).init(self.allocator);
         while (true) {
             if (self.current_token.?.tag == .end) break;
             var fe: Torrent.Info.FileEntry = undefined;
             if (std.mem.eql(u8, val, "length")) fe.length = try self.parseNextTokenu64();
-            if (std.mem.eql(u8, val, "path")) fe.path = try self.parseNextToken();
-            if (std.mem.eql(u8, val, "md5sum")) fe.md5sum = try self.parseNextToken();
-            try file_entries.append(fe);
+            if (std.mem.eql(u8, val, "path")) fe.path = try self.parseNextToken(result);
+            if (std.mem.eql(u8, val, "md5sum")) fe.md5sum = try self.parseNextToken(result);
+            try result.info.files.append(fe);
         }
-        result.info.files = try file_entries.toOwnedSlice();
     }
 
-    pub fn parseNextToken(self: *Self) ![]u8 {
+    pub fn parseNextToken(self: *Self, result: *Torrent) ![]u8 {
         self.current_token = try self.tokenizer.next();
-        return try self.allocator.dupe(u8, self.torrent[self.current_token.?.loc.start..self.current_token.?.loc.end]);
+        return try result.allocator.dupe(u8, self.torrent[self.current_token.?.loc.start..self.current_token.?.loc.end]);
     }
 
     pub fn parseNextTokeni64(self: *Self) !i64 {
@@ -144,3 +216,42 @@ pub const Parser = struct {
         return try std.fmt.parseInt(u64, self.torrent[self.current_token.?.loc.start..self.current_token.?.loc.end], 10);
     }
 };
+
+const testing = std.testing;
+
+test "parse basic torrent" {
+    // Sample torrent data
+    const input_const =
+        \\d8:announce37:udp://tracker.example.com:80/announce
+        \\7:comment15:Sample Torrent!
+        \\13:creation datei1704844800e
+        \\4:infod
+        \\6:lengthi1024e
+        \\4:name10:sample.txt
+        \\12:piece lengthi16384e
+        \\6:pieces20:aabbccddeeffgghhiijj
+        \\ee
+    ;
+
+    // Create a mutable copy of the input
+    const input = try testing.allocator.dupeZ(u8, input_const);
+    defer testing.allocator.free(input);
+
+    // Initialize parser with test allocator
+    var parser = try Parser.init(testing.allocator, input);
+    defer parser.deinit();
+
+    // Parse the torrent
+    var torrent = try parser.parse();
+    // this line causes runtime crash, why tf
+    defer torrent.deinit();
+    // Test basic fields
+    try testing.expectEqualStrings("udp://tracker.example.com:80/announce", torrent.announce);
+    // try testing.expectEqual(@as(i64, 1704844800), torrent.creation_date.?);
+
+    // Test info dictionary fields
+    try testing.expectEqualStrings("sample.txt", torrent.info.name);
+    try testing.expectEqual(@as(u32, 16384), torrent.info.piece_length);
+    try testing.expectEqual(@as(u64, 1024), torrent.info.length.?);
+    try testing.expectEqualStrings("aabbccddeeffgghhiijj", torrent.info.pieces);
+}
