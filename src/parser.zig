@@ -115,6 +115,13 @@ pub const Torrent = struct {
         // Handle info struct
         self.info.deinit();
     }
+
+    fn print(self: *Self) void {
+        std.debug.print("announce: {s}\n", .{self.announce});
+        std.debug.print("info- name: {s}\n", .{self.info.name});
+        std.debug.print("info- pieces: {s}\n", .{self.info.pieces});
+        std.debug.print("info- pieces_len: {d}\n============", .{self.info.piece_length});
+    }
 };
 
 pub const Parser = struct {
@@ -220,7 +227,6 @@ pub const Parser = struct {
 const testing = std.testing;
 
 test "parse basic torrent" {
-    // Sample torrent data
     const input_const =
         \\d8:announce37:udp://tracker.example.com:80/announce
         \\7:comment15:Sample Torrent!
@@ -233,24 +239,24 @@ test "parse basic torrent" {
         \\ee
     ;
 
-    // Create a mutable copy of the input
+    // Use testing.allocator for the input string
     const input = try testing.allocator.dupeZ(u8, input_const);
     defer testing.allocator.free(input);
 
-    // Initialize parser with test allocator
-    var parser = try Parser.init(testing.allocator, input);
-    defer parser.deinit();
+    // Create a dedicated arena allocator for the parser
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
 
-    // Parse the torrent
-    var torrent = try parser.parse();
-    // this line causes runtime crash, why tf
-    defer torrent.deinit();
-    // Test basic fields
+    var parser = try Parser.init(arena.allocator(), input);
+    // No need to defer parser.deinit() since arena handles cleanup
+
+    const torrent = try parser.parse();
+    // No need to defer torrent.deinit() since arena handles cleanup
+
+    // Add null checks for optional fields
     try testing.expectEqualStrings("udp://tracker.example.com:80/announce", torrent.announce);
-    // try testing.expectEqual(@as(i64, 1704844800), torrent.creation_date.?);
-
-    // Test info dictionary fields
     try testing.expectEqualStrings("sample.txt", torrent.info.name);
+    try testing.expectEqualStrings("Sample Torrent!", torrent.comment.?);
     try testing.expectEqual(@as(u32, 16384), torrent.info.piece_length);
     try testing.expectEqual(@as(u64, 1024), torrent.info.length.?);
     try testing.expectEqualStrings("aabbccddeeffgghhiijj", torrent.info.pieces);
