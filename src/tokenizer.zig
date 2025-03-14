@@ -83,7 +83,7 @@ pub const Tokenizer = struct {
                     result.loc.end = self.index;
                     self.index += 1;
                 },
-                0, '\n'  => {
+                0, '\n' => {
                     result.tag = .eof;
                 },
                 else => {
